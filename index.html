@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <!-- 禁用双指缩放 / 页面缩放 核心代码 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0, minimum-scale=1.0">
+    <title>物理小船游戏</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: Arial, sans-serif;
+        }
+        
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #f0f8ff;
+            touch-action: none; /* 禁止浏览器默认触摸行为 */
+            padding: 20px 0;
+        }
+
+        /* 顶部固定控制栏 - 游戏区域外 */
+        .top-controls {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 15px;
+            z-index: 20; /* 确保在最上层 */
+        }
+        
+        /* 重置按钮样式 */
+        .control-btn {
+            padding: 8px 16px;
+            background-color: #3498db;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            white-space: nowrap;
+        }
+
+        /* 滑动条容器：和按钮同款风格 */
+        .scale-wrapper {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            background-color: #3498db;
+            color: white;
+            border-radius: 4px;
+            font-size: 14px;
+            white-space: nowrap;
+        }
+        
+        /* 滑动条样式 */
+        .scale-slider {
+            width: 180px;
+            height: 6px;
+            appearance: none;
+            background: rgba(255,255,255,0.7);
+            border-radius: 3px;
+            outline: none;
+        }
+        .scale-slider::-webkit-slider-thumb {
+            appearance: none;
+            width: 18px;
+            height: 18px;
+            background: white;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+        .scale-slider::-moz-range-thumb {
+            width: 18px;
+            height: 18px;
+            background: white;
+            border-radius: 50%;
+            cursor: pointer;
+            border: none;
+        }
+        
+        .game-container {
+            position: relative;
+            background-color: #87ceeb;
+            border: 2px solid #2c3e50;
+            width: 960px;
+            height: 540px;
+            overflow: hidden;
+            transform-origin: top left;
+        }
+        
+        #gameCanvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+            touch-action: none;
+        }
+        
+        .success-message {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            display: none;
+            padding: 15px 30px;
+            background-color: #2ecc71;
+            color: white;
+            border-radius: 8px;
+            font-weight: bold;
+            z-index: 20;
+        }
+        
+        .border-stop-message {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            display: none;
+            padding: 15px 30px;
+            background-color: #e74c3c;
+            color: white;
+            border-radius: 8px;
+            font-weight: bold;
+            z-index: 20;
+        }
+    </style>
+</head>
+<body>
+    <!-- 顶部固定控制栏（游戏区域外） -->
+    <div class="top-controls">
+        <div class="scale-wrapper">
+            <span>滑动调整页面大小</span>
+            <input type="range" class="scale-slider" id="scaleSlider" min="0.5" max="2.0" step="0.1" value="1.0">
+        </div>
+        <button class="control-btn" id="resetBtn">重置游戏</button>
+    </div>
+
+    <!-- 游戏区域 -->
+    <div class="game-container" id="gameContainer">
+        <canvas id="gameCanvas" width="960" height="540"></canvas>
+        <div class="success-message" id="successMsg">恭喜，船只已成功靠岸！</div>
+        <div class="border-stop-message" id="borderStopMsg">小船碰到边框，已停止行驶！</div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const successMsg = document.getElementById('successMsg');
+        const borderStopMsg = document.getElementById('borderStopMsg');
+        const resetBtn = document.getElementById('resetBtn');
+        const gameContainer = document.getElementById('gameContainer');
+        const scaleSlider = document.getElementById('scaleSlider');
+
+        const shipImage = new Image();
+        shipImage.src = 'https://p26-flow-imagex-sign.byteimg.com/tos-cn-i-a9rns2rl98/3db6c169393f4cb1b567ec777b4be26e.png~tplv-a9rns2rl98-24:720:720.jpeg?lk3s=8e244e95&rcl=20260505181004C076EA2B8117A1493C02&rrcfp=d52e923b&x-expires=1778580604&x-signature=3%2BSp8K3p6Dg%2B2YsC9LkftoSTRQ0%3D';
+
+        let imagesLoaded = 0;
+        function checkImagesLoaded() {
+            imagesLoaded++;
+            if (imagesLoaded === 1) resetGame();
+        }
+        shipImage.onload = checkImagesLoaded;
+        shipImage.onerror = checkImagesLoaded;
+
+        const INIT_CONFIG = {
+            origin: { x: 170, y: 420 },
+            ship: { x: 170, y: 420, w: 60, h: 30, speedX: 0, speedY: 0, maxSpeed: 0.8, isMoving: false },
+            vectors: {
+                E: { x: 170 - 84*Math.sin(Math.PI/6), y: 420 - 84*Math.cos(Math.PI/6), color: '#8e44ad', isDragged: false, fixed: true },
+                B: { x: 170 + 100*Math.sin(Math.PI/3), y: 420 + 100*Math.cos(Math.PI/3), color: '#e74c3c', isDragged: false, fixed: false },
+                C: { x: 170 + 120, y: 420, color: '#f39c12', isDragged: false, fixed: false },
+                D: { x: 170 + 100*Math.sin(Math.PI/3), y: 420 - 100*Math.cos(Math.PI/3), color: '#27ae60', isDragged: false, fixed: false },
+            },
+            dock: { x: 960 - 96, y: 0, w: 96, h: 72, color: 'rgba(255,60,60,0.3)' },
+            physics: { forceScale: 0.002, friction: 0.98 }
+        };
+
+        let gameState = JSON.parse(JSON.stringify(INIT_CONFIG));
+        let activeTouches = {};
+        let animationId = null;
+        let currentScale = 1.0; // 保存当前缩放比例
+
+        let BASE_FORCE = 0;
+        function calcBaseForce() {
+            let fx=0,fy=0;
+            const o=INIT_CONFIG.origin;
+            for(const k in INIT_CONFIG.vectors){
+                const v=INIT_CONFIG.vectors[k];
+                const dx=v.x-o.x, dy=v.y-o.y;
+                const m=Math.hypot(dx,dy);
+                fx+=dx*m*0.002;
+                fy+=dy*m*0.002;
+            }
+            BASE_FORCE=Math.hypot(fx,fy);
+        }
+        calcBaseForce();
+
+        // 缩放页面并记录比例
+        scaleSlider.addEventListener('input', () => {
+            currentScale = parseFloat(scaleSlider.value);
+            gameContainer.style.transform = `scale(${currentScale})`;
+        });
+
+        resetBtn.addEventListener('click', resetGame);
+
+        function resetGame() {
+            cancelAnimationFrame(animationId);
+            gameState = JSON.parse(JSON.stringify(INIT_CONFIG));
+            successMsg.style.display = 'none';
+            borderStopMsg.style.display = 'none';
+            drawAll();
+        }
+
+        function checkThreeDragged() {
+            const v=gameState.vectors;
+            return v.B.isDragged && v.C.isDragged && v.D.isDragged;
+        }
+
+        // ========== 核心修复：缩放后坐标精准计算 ==========
+        function getPos(e) {
+            const r = canvas.getBoundingClientRect();
+            // 关键：鼠标坐标 ÷ 缩放比例 = 真实画布坐标
+            const x = (e.clientX - r.left) / currentScale;
+            const y = (e.clientY - r.top) / currentScale;
+            return { x, y };
+        }
+
+        function getNearestVector(p) {
+            let min=40, key=null;
+            for(const k in gameState.vectors){
+                const v=gameState.vectors[k];
+                if(v.fixed) continue;
+                const d=Math.hypot(p.x-v.x, p.y-v.y);
+                if(d<min){min=d;key=k;}
+            }
+            return key;
+        }
+
+        // 触摸
+        canvas.addEventListener('touchstart', e=>{
+            for(let t of e.changedTouches){
+                const p=getPos(t);
+                const key=getNearestVector(p);
+                if(key){activeTouches[t.identifier]={key};gameState.vectors[key].isDragged=true;}
+            }
+        });
+
+        canvas.addEventListener('touchmove', e=>{
+            for(let t of e.changedTouches){
+                const touch=activeTouches[t.identifier];
+                if(!touch)continue;
+                const p=getPos(t);
+                gameState.vectors[touch.key].x=p.x;
+                gameState.vectors[touch.key].y=p.y;
+            }
+            drawAll();
+            if(checkThreeDragged() && !gameState.ship.isMoving && !checkArriveDock()){
+                gameState.ship.isMoving=true;
+                gameLoop();
+            }
+        });
+
+        canvas.addEventListener('touchend',e=>{
+            for(let t of e.changedTouches) delete activeTouches[t.identifier];
+        });
+
+        // 鼠标
+        let mouseDrag=null;
+        canvas.addEventListener('mousedown',e=>{
+            const p=getPos(e);
+            const key=getNearestVector(p);
+            if(key){mouseDrag=key;gameState.vectors[key].isDragged=true;}
+        });
+
+        canvas.addEventListener('mousemove',e=>{
+            if(!mouseDrag)return;
+            const p=getPos(e);
+            gameState.vectors[mouseDrag].x=p.x;
+            gameState.vectors[mouseDrag].y=p.y;
+            drawAll();
+            if(checkThreeDragged() && !gameState.ship.isMoving && !checkArriveDock()){
+                gameState.ship.isMoving=true;
+                gameLoop();
+            }
+        });
+
+        canvas.addEventListener('mouseup',()=>{mouseDrag=null;});
+
+        function checkHitBorder(){
+            const s=gameState.ship;
+            return s.x-30<0 || s.x+30>960 || s.y-15<0 || s.y+15>540;
+        }
+
+        function calcTotalForce(){
+            let fx=0,fy=0;
+            const o=gameState.origin;
+            for(const k in gameState.vectors){
+                const v=gameState.vectors[k];
+                const dx=v.x-o.x, dy=v.y-o.y;
+                const m=Math.hypot(dx,dy);
+                if(m>0){fx+=dx*m*0.002;fy+=dy*m*0.002;}
+            }
+            return Math.hypot(fx,fy);
+        }
+
+        function calcForce(){
+            let fx=0,fy=0;
+            const o=gameState.origin;
+            for(const k in gameState.vectors){
+                const v=gameState.vectors[k];
+                const dx=v.x-o.x, dy=v.y-o.y;
+                const m=Math.hypot(dx,dy);
+                if(m>0){fx+=dx*m*0.002;fy+=dy*m*0.002;}
+            }
+            return {x:fx,y:fy};
+        }
+
+        function checkArriveDock(){
+            const s=gameState.ship,d=gameState.dock;
+            return s.x-30>=d.x && s.x+30<=d.x+d.w && s.y-15>=d.y && s.y+15<=d.y+d.h;
+        }
+
+        function updateShip(){
+            if(!gameState.ship.isMoving)return;
+
+            if(checkArriveDock()){
+                gameState.ship.isMoving=false;successMsg.style.display='block';borderStopMsg.style.display='none';
+                cancelAnimationFrame(animationId);return;
+            }
+            if(checkHitBorder()){
+                gameState.ship.isMoving=false;borderStopMsg.style.display='block';successMsg.style.display='none';
+                cancelAnimationFrame(animationId);return;
+            }
+
+            const f=calcForce();
+            const totalF=calcTotalForce();
+
+            let speedMulti = 1.0;
+            if(totalF > BASE_FORCE * 1.5) speedMulti = 2.0;
+            if(totalF > BASE_FORCE * 3.0) speedMulti = 3.0;
+            if(totalF > BASE_FORCE * 5.0) speedMulti = 4.0;
+
+            gameState.ship.speedX += f.x * speedMulti;
+            gameState.ship.speedY += f.y * speedMulti;
+
+            const maxSpeed = 0.8 * speedMulti;
+            const currentSpeed = Math.hypot(gameState.ship.speedX, gameState.ship.speedY);
+            if(currentSpeed > maxSpeed){
+                gameState.ship.speedX *= maxSpeed / currentSpeed;
+                gameState.ship.speedY *= maxSpeed / currentSpeed;
+            }
+
+            gameState.ship.speedX *= 0.98;
+            gameState.ship.speedY *= 0.98;
+            gameState.ship.x += gameState.ship.speedX;
+            gameState.ship.y += gameState.ship.speedY;
+        }
+
+        function drawArrow(fx,fy,tx,ty,color, isFixed=false){
+            const headLen = 12;
+            const angle = Math.atan2(ty-fy, tx-fx);
+            
+            ctx.beginPath();
+            ctx.moveTo(fx, fy);
+            ctx.lineTo(tx, ty);
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 3;
+            ctx.stroke();
+
+            if(isFixed){
+                ctx.beginPath();
+                ctx.moveTo(tx, ty);
+                ctx.lineTo(tx - headLen*Math.cos(angle-Math.PI/6), ty - headLen*Math.sin(angle-Math.PI/6));
+                ctx.lineTo(tx - headLen*Math.cos(angle+Math.PI/6), ty - headLen*Math.sin(angle+Math.PI/6));
+                ctx.closePath();
+                ctx.fillStyle = color;
+                ctx.fill();
+            }else{
+                ctx.beginPath();
+                ctx.arc(tx,ty,10,0,Math.PI*2);
+                ctx.fillStyle=color;
+                ctx.fill();
+                ctx.strokeStyle='#fff';
+                ctx.stroke();
+            }
+        }
+
+        function drawDock(){
+            const d=gameState.dock;
+            ctx.fillStyle=d.color;ctx.fillRect(d.x,d.y,d.w,d.h);
+            ctx.strokeStyle='#e74c3c';ctx.lineWidth=3;ctx.strokeRect(d.x,d.y,d.w,d.h);
+            ctx.fillStyle='#000';ctx.font='18px Arial';ctx.textAlign='center';
+            ctx.fillText('泊船位',d.x+d.w/2,d.y+d.h/2);
+        }
+
+        function drawVectors(){
+            const o=gameState.origin;
+            for(const k in gameState.vectors){
+                const v=gameState.vectors[k];
+                drawArrow(o.x,o.y,v.x,v.y,v.color, v.fixed);
+            }
+        }
+
+        function drawShip(){
+            const s=gameState.ship;
+            ctx.save();ctx.translate(s.x,s.y);
+            let angle=Math.atan2(s.speedY,s.speedX);
+            if(Math.hypot(s.speedX,s.speedY)<0.1)angle=0;
+            ctx.rotate(angle);
+            if(shipImage.complete)ctx.drawImage(shipImage,-30,-15,60,30);
+            else{ctx.fillStyle='#fff';ctx.fillRect(-30,-15,60,30);}
+            ctx.restore();
+        }
+
+        function drawAll(){
+            ctx.clearRect(0,0,960,540);
+            drawDock();drawVectors();drawShip();
+        }
+
+        function gameLoop(){
+            if(!gameState.ship.isMoving)return;
+            updateShip();
+            drawAll();
+            animationId=requestAnimationFrame(gameLoop);
+        }
+    </script>
+</body>
+</html>
